@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/black">
+
+    <!--
+        ScrollView allows vertical panning through a zoomed-in page.
+        On the AR glasses the user scrolls with head nod (pitch gesture).
+        On the emulator, touch scroll works too.
+    -->
+    <ScrollView
+        android:id="@+id/scrollView"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:scrollbars="none"
+        android:background="@color/black"
+        android:overScrollMode="never"
+        android:fillViewport="false">
+
+        <!--
+            Width = match_parent (fills screen width exactly — this IS the zoom).
+            Height = wrap_content (natural rendered height at that zoom level).
+            scaleType fitXY + adjustViewBounds lets us control exact pixel size.
+        -->
+        <ImageView
+            android:id="@+id/pdfImageView"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:scaleType="fitXY"
+            android:adjustViewBounds="true"
+            android:background="@color/black"
+            android:contentDescription="Sheet music page" />
+
+    </ScrollView>
+
+    <!-- Page indicator top-right -->
+    <TextView
+        android:id="@+id/pageIndicator"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|end"
+        android:layout_margin="12dp"
+        android:textColor="@color/page_indicator"
+        android:textSize="12sp"
+        android:fontFamily="monospace"
+        android:background="#55000000"
+        android:paddingHorizontal="6dp"
+        android:paddingVertical="2dp"
+        android:text="1 / 1" />
+
+    <!-- Scroll position indicator (thin bar on right edge) -->
+    <View
+        android:id="@+id/scrollBar"
+        android:layout_width="3dp"
+        android:layout_height="40dp"
+        android:layout_gravity="top|end"
+        android:layout_marginEnd="0dp"
+        android:layout_marginTop="30dp"
+        android:background="@color/page_indicator"
+        android:alpha="0.6" />
+
+    <!-- Brief gesture feedback at bottom -->
+    <TextView
+        android:id="@+id/gestureHint"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|center_horizontal"
+        android:layout_marginBottom="20dp"
+        android:textColor="@color/page_indicator"
+        android:textSize="12sp"
+        android:background="#55000000"
+        android:paddingHorizontal="8dp"
+        android:paddingVertical="3dp"
+        android:text=""
+        android:visibility="invisible" />
+
+</FrameLayout>
