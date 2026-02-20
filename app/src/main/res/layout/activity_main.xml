@@ -58,6 +58,26 @@
         android:text="1"
         android:visibility="invisible" />
 
+    <!--
+        Player detected BPM — bottom-left, only during PLAYING state.
+        Shows "you ♩68 (-2)" — negative = behind, positive = rushing.
+    -->
+    <TextView
+        android:id="@+id/playerBpmLabel"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|start"
+        android:layout_marginStart="8dp"
+        android:layout_marginBottom="16dp"
+        android:textColor="#FFB850"
+        android:textSize="11sp"
+        android:fontFamily="monospace"
+        android:background="@color/black"
+        android:paddingHorizontal="4dp"
+        android:paddingVertical="2dp"
+        android:text="you ♩ –"
+        android:visibility="invisible" />
+
     <!-- Gesture / status hint — bottom centre -->
     <TextView
         android:id="@+id/gestureHint"

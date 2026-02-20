@@ -7,6 +7,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.DashPathEffect
 import android.graphics.Paint
 import android.graphics.Rect
 import android.hardware.Sensor
@@ -77,15 +78,28 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
 
     // ── Playhead drawing ──────────────────────────────────────────────────
     private val playheadPaint = Paint().apply {
-        color  = PLAYHEAD_COLOR
+        color       = PLAYHEAD_COLOR
         strokeWidth = 3f
         isAntiAlias = true
     }
-    /** 0..1 position of playhead within the active row (null = hidden) */
+    // Player bar — dashed, dimmer, same row as metro bar
+    private val playerBarPaint = Paint().apply {
+        color       = Color.argb(180, 255, 200, 80)   // amber — different from metro green
+        strokeWidth = 4f
+        isAntiAlias = true
+        pathEffect  = DashPathEffect(floatArrayOf(10f, 5f), 0f)
+    }
+
+    /** Metro bar: 0..1 position within the active row */
     private var playheadFraction  = 0f
     /** Which of the 2 stacked rows is active (0=top, 1=bottom) */
     private var activeRow         = 0
     private var playheadAnimator: ValueAnimator? = null
+
+    /** Player bar: driven by wall clock + detected BPM */
+    private var playerBarBpm      = 0f    // 0 = not yet detected
+    private var playerBarStartMs  = 0L    // wall-clock time when player bar was at fraction 0
+    private lateinit var playerBpmLabel: TextView
 
     // ── Segments ──────────────────────────────────────────────────────────
     private var segments     = listOf<Bitmap>()
@@ -125,11 +139,12 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
 
         setContentView(R.layout.activity_main)
 
-        imageView     = findViewById(R.id.pdfImageView)
-        pageIndicator = findViewById(R.id.pageIndicator)
-        gestureHint   = findViewById(R.id.gestureHint)
-        bpmLabel      = findViewById(R.id.bpmLabel)
-        countInLabel  = findViewById(R.id.countInLabel)
+        imageView      = findViewById(R.id.pdfImageView)
+        pageIndicator  = findViewById(R.id.pageIndicator)
+        gestureHint    = findViewById(R.id.gestureHint)
+        bpmLabel       = findViewById(R.id.bpmLabel)
+        countInLabel   = findViewById(R.id.countInLabel)
+        playerBpmLabel = findViewById(R.id.playerBpmLabel)
 
         sensorManager     = getSystemService(SENSOR_SERVICE) as SensorManager
         gameRotationSensor = sensorManager.getDefaultSensor(Sensor.TYPE_GAME_ROTATION_VECTOR)
@@ -143,11 +158,12 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
         }
 
         audioMonitor = AudioMonitor(
-            context           = this,
-            bpm               = bpm,
+            context            = this,
+            bpm                = bpm,
             silenceBeatsToStop = 2,
-            onPlayerStopped   = { onPlayerStopped() },
-            onPlayerResumed   = { onPlayerResumed() },
+            onPlayerStopped    = { onPlayerStopped() },
+            onPlayerResumed    = { onPlayerResumed() },
+            onPlayerBpmUpdate  = { detected -> onPlayerBpmUpdate(detected) },
         )
 
         // Ask for mic permission upfront (gracefully degrades if denied)
@@ -247,12 +263,26 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
             }
         }
 
-        // Draw playhead line over active row
+        // Draw playhead bars over active row
         if (playState == PlayState.PLAYING || playState == PlayState.PAUSED) {
-            val x       = playheadFraction * w
-            val rowTop  = activeRow * slotH
-            val rowBot  = rowTop + slotH
-            canvas.drawLine(x, rowTop.toFloat(), x, rowBot.toFloat(), playheadPaint)
+            val rowTop = (activeRow * slotH).toFloat()
+            val rowBot = (rowTop + slotH)
+
+            // ── Metro bar (green solid) ──────────────────────────────────
+            val metroX = playheadFraction * w
+            canvas.drawLine(metroX, rowTop, metroX, rowBot, playheadPaint)
+
+            // ── Player bar (amber dashed) ─────────────────────────────────
+            // Position driven by wall clock at detected player BPM.
+            // Bar drifts vs metro bar naturally — gap shows tempo error.
+            if (playerBarBpm > 0f) {
+                val rowDurationMs = BARS_PER_SEGMENT * beatsPerBar * 60_000L / playerBarBpm
+                val elapsed = (System.currentTimeMillis() - playerBarStartMs)
+                    .coerceAtLeast(0L)
+                val playerFraction = (elapsed % rowDurationMs) / rowDurationMs
+                val playerX = playerFraction.toFloat() * w
+                canvas.drawLine(playerX, rowTop, playerX, rowBot, playerBarPaint)
+            }
         }
 
         imageView.setImageBitmap(bmp)
@@ -300,10 +330,43 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
 
     private fun beginPlaying() {
         playState = PlayState.PLAYING
-        countInLabel.visibility = View.INVISIBLE
-        audioMonitor.bpm        = bpm
+        countInLabel.visibility  = View.INVISIBLE
+        playerBpmLabel.visibility = View.VISIBLE
+        playerBpmLabel.text       = "⟳ …"     // waiting for first detection
+
+        // Initialise player bar at same BPM as metronome — it will drift
+        // as soon as onset detection returns a different BPM
+        playerBarBpm     = bpm.toFloat()
+        playerBarStartMs = System.currentTimeMillis()
+
+        audioMonitor.bpm = bpm
         audioMonitor.start()
         animateRow(0)
+    }
+
+    /**
+     * Called when OnsetDetector updates the rolling player BPM estimate.
+     * Updates the player bar speed while preserving its current visual position
+     * (so the bar doesn't jump on BPM changes, just changes speed).
+     */
+    private fun onPlayerBpmUpdate(detected: Float) {
+        if (playState != PlayState.PLAYING && playState != PlayState.PAUSED) return
+
+        // Preserve current player bar visual position when changing speed
+        if (playerBarBpm > 0f) {
+            val rowDurationMs = BARS_PER_SEGMENT * beatsPerBar * 60_000L / playerBarBpm
+            val elapsed = System.currentTimeMillis() - playerBarStartMs
+            val currentFraction = (elapsed % rowDurationMs) / rowDurationMs
+
+            // With new BPM, what startMs would put bar at same fraction?
+            val newRowDuration = BARS_PER_SEGMENT * beatsPerBar * 60_000L / detected
+            playerBarStartMs = System.currentTimeMillis() - (currentFraction * newRowDuration).toLong()
+        }
+
+        playerBarBpm = detected
+        val diff = detected - bpm
+        val sign = if (diff > 0) "+" else ""
+        playerBpmLabel.text = "you ♩${detected.toInt()} (${sign}${diff.toInt()})"
     }
 
     /**
@@ -314,6 +377,8 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
         if (playState != PlayState.PLAYING) return
         activeRow        = row
         playheadFraction = 0f
+        // Reset player bar to 0 at start of each row — drift comparison resets per segment
+        playerBarStartMs = System.currentTimeMillis()
 
         val durationMs = (BARS_PER_SEGMENT.toLong() * beatsPerBar * 60_000L / bpm)
 
@@ -370,10 +435,12 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
         metronome.stop()
         audioMonitor.stop()
         playheadAnimator?.cancel()
-        playheadAnimator        = null
-        playheadFraction        = 0f
-        countInLabel.visibility = View.INVISIBLE
-        bpmLabel.visibility     = View.VISIBLE
+        playheadAnimator         = null
+        playheadFraction         = 0f
+        playerBarBpm             = 0f
+        countInLabel.visibility  = View.INVISIBLE
+        playerBpmLabel.visibility = View.INVISIBLE
+        bpmLabel.visibility      = View.VISIBLE
         refreshPlayhead()
     }
 

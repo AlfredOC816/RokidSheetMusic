@@ -13,40 +13,45 @@ import androidx.core.content.ContextCompat
 import kotlin.math.sqrt
 
 /**
- * Monitors microphone RMS level in the background.
+ * Monitors microphone audio for two purposes:
  *
- * Calls [onPlayerStopped] when silence lasts longer than [silenceBeatsToStop]
- * beats at the given BPM. Calls [onPlayerResumed] when sound comes back.
+ * 1. **Silence detection** — calls [onPlayerStopped] when the player stops
+ *    playing for longer than [silenceBeatsToStop] beats, and [onPlayerResumed]
+ *    when they come back. Used to pause/resume the playhead.
  *
- * Requires RECORD_AUDIO permission — check before calling start().
+ * 2. **Onset detection** — feeds raw audio through [OnsetDetector] to estimate
+ *    the player's actual BPM. Calls [onPlayerBpmUpdate] with the rolling estimate.
  *
- * Note: on some AR glasses, the mic may not be accessible from an app;
- * in that case hasPermission() returns true but no sound is detected.
- * The auto-pause feature degrades gracefully — if RMS stays near zero
- * it will just pause immediately. Use [enabled] to disable if not wanted.
+ * All callbacks fire on the main (UI) thread.
  */
 class AudioMonitor(
     private val context: Context,
     var bpm: Int,
-    val silenceBeatsToStop: Int = 2,
-    val onPlayerStopped:  () -> Unit,
-    val onPlayerResumed:  () -> Unit,
+    val silenceBeatsToStop: Int   = 2,
+    val onPlayerStopped:    () -> Unit,
+    val onPlayerResumed:    () -> Unit,
+    val onPlayerBpmUpdate:  (bpm: Float) -> Unit = {},
 ) {
     companion object {
         private const val TAG         = "AudioMonitor"
         private const val SAMPLE_RATE = 16_000
-        private const val SILENCE_RMS = 0.008f   // below this = silence
-        private const val RESUME_RMS  = 0.025f   // above this = playing
+        private const val SILENCE_RMS = 0.008f
+        private const val RESUME_RMS  = 0.025f
     }
 
     var enabled = true
 
-    private var recorder:     AudioRecord? = null
-    private var monitorThread: Thread?     = null
+    private var recorder:      AudioRecord? = null
+    private var monitorThread: Thread?      = null
     private val uiHandler = Handler(Looper.getMainLooper())
 
-    @Volatile private var monitoring = false
+    @Volatile private var monitoring   = false
     @Volatile private var playerSilent = false
+
+    private val onsetDetector = OnsetDetector(
+        sampleRate   = SAMPLE_RATE,
+        onBpmUpdate  = { bpm -> uiHandler.post { onPlayerBpmUpdate(bpm) } },
+    )
 
     fun hasPermission() = ContextCompat.checkSelfPermission(
         context, Manifest.permission.RECORD_AUDIO
@@ -55,12 +60,13 @@ class AudioMonitor(
     fun start() {
         if (!enabled || !hasPermission()) return
         stop()
+        onsetDetector.reset()
 
         val bufSize = maxOf(
             AudioRecord.getMinBufferSize(SAMPLE_RATE,
                 AudioFormat.CHANNEL_IN_MONO,
                 AudioFormat.ENCODING_PCM_16BIT),
-            SAMPLE_RATE / 10 * 2  // 100ms of samples
+            SAMPLE_RATE / 10 * 2   // 100ms of audio
         )
 
         recorder = AudioRecord(
@@ -71,41 +77,46 @@ class AudioMonitor(
             bufSize
         ).also { it.startRecording() }
 
-        monitoring = true
+        monitoring   = true
         playerSilent = false
 
         monitorThread = Thread {
-            val buf = ShortArray(bufSize / 2)
-            val silenceWindowMs = silenceBeatsToStop * 60_000L / bpm
-            var silenceSinceMs = 0L
-            var lastReadMs = System.currentTimeMillis()
+            val buf           = ShortArray(bufSize / 2)
+            val silenceMs     = silenceBeatsToStop * 60_000L / bpm
+            var silenceSince  = 0L
+            var lastReadMs    = System.currentTimeMillis()
 
             while (monitoring) {
                 val read = recorder?.read(buf, 0, buf.size) ?: break
                 if (read <= 0) continue
 
-                val now    = System.currentTimeMillis()
-                val dtMs   = now - lastReadMs
-                lastReadMs = now
+                val nowMs  = System.currentTimeMillis()
+                val dtMs   = nowMs - lastReadMs
+                lastReadMs = nowMs
 
-                // RMS of this buffer
+                // RMS for silence detection
                 var sum = 0.0
-                for (i in 0 until read) sum += (buf[i] / 32768.0) * (buf[i] / 32768.0)
+                for (i in 0 until read) {
+                    val s = buf[i] / 32_768.0
+                    sum += s * s
+                }
                 val rms = sqrt(sum / read).toFloat()
 
+                // Onset detection (runs on same thread, callback posts to UI)
+                onsetDetector.process(buf, read, nowMs)
+
+                // Silence / resume logic
                 if (rms < SILENCE_RMS) {
-                    silenceSinceMs += dtMs
-                    if (!playerSilent && silenceSinceMs >= silenceWindowMs) {
+                    silenceSince += dtMs
+                    if (!playerSilent && silenceSince >= silenceMs) {
                         playerSilent = true
                         uiHandler.post { onPlayerStopped() }
                     }
                 } else if (rms > RESUME_RMS) {
-                    if (silenceSinceMs > 0 || playerSilent) {
-                        silenceSinceMs = 0
-                        if (playerSilent) {
-                            playerSilent = false
-                            uiHandler.post { onPlayerResumed() }
-                        }
+                    silenceSince = 0
+                    if (playerSilent) {
+                        playerSilent = false
+                        uiHandler.post { onPlayerResumed() }
                     }
                 }
             }
@@ -115,7 +126,7 @@ class AudioMonitor(
             it.start()
         }
 
-        Log.d(TAG, "Monitoring started (silence threshold: ${silenceBeatsToStop} beats @ ${bpm} BPM = ${silenceBeatsToStop * 60_000 / bpm}ms)")
+        Log.d(TAG, "Monitoring started — silence window: ${silenceBeatsToStop} beats @ ${bpm} BPM = ${silenceBeatsToStop * 60_000 / bpm}ms")
     }
 
     fun stop() {
