@@ -4,15 +4,31 @@
     android:layout_height="match_parent"
     android:background="@color/black">
 
+    <!-- Tab image (composited with playhead + dim directly onto bitmap) -->
     <ImageView
         android:id="@+id/pdfImageView"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:scaleType="fitXY"
         android:background="@color/black"
-        android:contentDescription="Tab measure" />
+        android:contentDescription="Tab segment" />
 
-    <!-- Measure indicator top-right -->
+    <!-- BPM label — top-left, only shown in IDLE state -->
+    <TextView
+        android:id="@+id/bpmLabel"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|start"
+        android:layout_margin="8dp"
+        android:textColor="@color/page_indicator"
+        android:textSize="11sp"
+        android:fontFamily="monospace"
+        android:background="@color/black"
+        android:paddingHorizontal="4dp"
+        android:paddingVertical="2dp"
+        android:text="♩ 70" />
+
+    <!-- Page indicator — top-right -->
     <TextView
         android:id="@+id/pageIndicator"
         android:layout_width="wrap_content"
@@ -25,9 +41,44 @@
         android:background="@color/black"
         android:paddingHorizontal="4dp"
         android:paddingVertical="2dp"
-        android:text="1 / 30" />
+        android:text="1 / 8" />
 
-    <!-- Gesture feedback -->
+    <!--
+        Count-in overlay — large beat number, centre screen.
+        Visible only during COUNT_IN state.
+    -->
+    <TextView
+        android:id="@+id/countInLabel"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:textColor="#CCFFFFFF"
+        android:textSize="72sp"
+        android:fontFamily="sans-serif-light"
+        android:text="1"
+        android:visibility="invisible" />
+
+    <!--
+        Player detected BPM — bottom-left, only during PLAYING state.
+        Shows "you ♩68 (-2)" — negative = behind, positive = rushing.
+    -->
+    <TextView
+        android:id="@+id/playerBpmLabel"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|start"
+        android:layout_marginStart="8dp"
+        android:layout_marginBottom="16dp"
+        android:textColor="#FFB850"
+        android:textSize="11sp"
+        android:fontFamily="monospace"
+        android:background="@color/black"
+        android:paddingHorizontal="4dp"
+        android:paddingVertical="2dp"
+        android:text="you ♩ –"
+        android:visibility="invisible" />
+
+    <!-- Gesture / status hint — bottom centre -->
     <TextView
         android:id="@+id/gestureHint"
         android:layout_width="wrap_content"
@@ -35,7 +86,7 @@
         android:layout_gravity="bottom|center_horizontal"
         android:layout_marginBottom="16dp"
         android:textColor="@color/page_indicator"
-        android:textSize="14sp"
+        android:textSize="13sp"
         android:background="@color/black"
         android:paddingHorizontal="8dp"
         android:paddingVertical="3dp"
